@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spark-mlx-llm"
+version = "0.1.0"
+description = "Spark2_5 inference support for MLX LM"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+dependencies = [
+    "mlx-lm>=0.31.3,<0.32",
+]
+
+[project.optional-dependencies]
+cpu = ["mlx[cpu]>=0.32.1"]
+cuda12 = ["mlx[cuda12]>=0.32.1"]
+cuda13 = ["mlx[cuda13]>=0.32.1"]
+test = ["pytest>=8", "ruff>=0.12"]
+
+[project.scripts]
+spark-mlx-generate = "spark_mlx_llm.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["spark_mlx_llm*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: requires the full Spark2_5 checkpoint",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
