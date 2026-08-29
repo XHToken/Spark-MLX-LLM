@@ -1,4 +1,4 @@
-# Spark-Mlx-LLM
+# Spark-MLX-LLM
 
 Spark2_5 inference support for [MLX](https://github.com/ml-explore/mlx) and
 [MLX LM](https://github.com/ml-explore/mlx-lm).
