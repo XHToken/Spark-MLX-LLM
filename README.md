@@ -49,8 +49,8 @@ the checkpoint root before loading the model.
 Clone the repository and create an isolated environment:
 
 ```sh
-git clone https://github.com/XHToken/Spark-Mlx-LLM.git
-cd Spark-Mlx-LLM
+git clone https://github.com/XHToken/Spark-MLX-LLM.git
+cd Spark-MLX-LLM
 python3 -m venv .venv
 ```
 
