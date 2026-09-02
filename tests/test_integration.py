@@ -3,8 +3,10 @@ from pathlib import Path
 
 import mlx.core as mx
 import pytest
+from mlx_lm.utils import load as load_with_mlx_lm
 
 from spark_mlx_llm.loader import load
+from spark_mlx_llm.registration import register_model
 
 MODEL_PATH = os.environ.get("SPARK25_MODEL")
 MODEL_DTYPE = os.environ.get("SPARK25_DTYPE")
@@ -74,3 +76,18 @@ def test_real_checkpoint_loads_strictly():
     logits = model(mx.array([[0]]))
     mx.eval(logits)
     assert logits.shape == (1, 1, 131072)
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(not MODEL_PATH, reason="SPARK25_MODEL is not set")
+def test_native_mlx_lm_loader_resolves_checkpoint():
+    register_model()
+    model, tokenizer, config = load_with_mlx_lm(
+        Path(MODEL_PATH),
+        lazy=True,
+        return_config=True,
+    )
+
+    assert config["model_type"] == "spark2_5"
+    assert len(model.layers) == 28
+    assert tokenizer.has_tool_calling

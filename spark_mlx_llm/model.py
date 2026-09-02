@@ -347,6 +347,13 @@ class Model(nn.Module):
             for layer in self.layers
         ]
 
+    @property
+    def quant_predicate(self):
+        def predicate(path, _):
+            return not path.endswith("self_attn.g_proj")
+
+        return predicate
+
     def sanitize(self, weights):
         if self.args.tie_word_embeddings:
             weights.pop("lm_head.weight", None)

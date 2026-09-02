@@ -21,6 +21,9 @@ test = ["pytest>=8", "ruff>=0.12"]
 
 [project.scripts]
 spark-mlx-generate = "spark_mlx_llm.cli:main"
+spark-mlx-convert = "spark_mlx_llm.mlx_tools:convert_main"
+spark-mlx-chat = "spark_mlx_llm.mlx_tools:chat_main"
+spark-mlx-server = "spark_mlx_llm.mlx_tools:server_main"
 
 [tool.setuptools.packages.find]
 include = ["spark_mlx_llm*"]
