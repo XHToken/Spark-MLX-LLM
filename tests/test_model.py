@@ -71,6 +71,44 @@ def test_forward_shape():
     assert logits.shape == (1, 3, 32)
 
 
+def wide_head_args(**overrides):
+    """Geometry of Spark-X2.5-4B, where hidden_size is not n_heads * head_dim."""
+    values = {
+        "hidden_size": 20,
+        "num_attention_heads": 4,
+        "num_key_value_heads": 2,
+        "head_dim": 8,
+    }
+    values.update(overrides)
+    return make_args(**values)
+
+
+def test_attention_shapes_when_hidden_size_differs_from_head_geometry():
+    args = wide_head_args()
+    assert args.hidden_size != args.num_attention_heads * args.head_dim
+
+    parameters = dict(tree_flatten(Model(args).parameters()))
+    q_size = args.num_attention_heads * args.head_dim
+    kv_size = args.num_key_value_heads * args.head_dim
+
+    assert parameters["model.layers.0.self_attn.q_k_v_proj.weight"].shape == (
+        q_size + 2 * kv_size,
+        args.hidden_size,
+    )
+    assert parameters["model.layers.0.self_attn.out_proj.weight"].shape == (
+        args.hidden_size,
+        q_size,
+    )
+
+
+def test_forward_shape_when_hidden_size_differs_from_head_geometry():
+    args = wide_head_args()
+    logits = Model(args)(mx.array([[1, 2, 3]]))
+    mx.eval(logits)
+
+    assert logits.shape == (1, 3, args.vocab_size)
+
+
 def test_cached_decode_matches_full_forward():
     model = Model(make_args())
     tokens = mx.array([[1, 2, 3]])
