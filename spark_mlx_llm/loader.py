@@ -4,9 +4,8 @@ from typing import Any
 import mlx.core as mx
 from huggingface_hub import snapshot_download
 from mlx.utils import tree_map
-from mlx_lm.tokenizer_utils import BPEStreamingDetokenizer, TokenizerWrapper
+from mlx_lm.tokenizer_utils import load as load_tokenizer
 from mlx_lm.utils import load_model
-from transformers import PreTrainedTokenizerFast
 
 from .model import Model, ModelArgs
 
@@ -46,15 +45,9 @@ def _get_model_classes(config: dict):
 
 
 def _load_tokenizer(model_path, tokenizer_config, eos_token_ids):
-    tokenizer = PreTrainedTokenizerFast.from_pretrained(
+    return load_tokenizer(
         model_path,
-        **(tokenizer_config or {}),
-    )
-    if isinstance(eos_token_ids, int):
-        eos_token_ids = [eos_token_ids]
-    return TokenizerWrapper(
-        tokenizer,
-        detokenizer_class=BPEStreamingDetokenizer,
+        tokenizer_config_extra=tokenizer_config,
         eos_token_ids=eos_token_ids,
     )
 

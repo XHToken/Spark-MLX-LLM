@@ -14,6 +14,7 @@ package.
 - CPU, Apple Silicon GPU, and optional Linux CUDA execution
 - BF16 and FP32 weight overrides
 - Sliding-window and full-attention KV caches
+- Automatic Spark2_5 function-call parsing through MLX LM
 - Command-line and Python inference interfaces
 
 ## Supported model
@@ -160,6 +161,33 @@ response = generate(
 print(response)
 ```
 
+When the checkpoint provides the Spark2_5 tool-aware chat template, the returned
+tokenizer automatically exposes MLX LM's tool parser:
+
+```python
+assert tokenizer.has_tool_calling
+tool_call = tokenizer.tool_parser(
+    "set_state"
+    "<arg_key>name</arg_key><arg_value>上海</arg_value>"
+    "<arg_key>count</arg_key><arg_value>42</arg_value>",
+    [
+        {
+            "type": "function",
+            "function": {
+                "name": "set_state",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "count": {"type": "integer"},
+                    },
+                },
+            },
+        }
+    ],
+)
+```
+
 Select an execution device before loading the model when using the Python API:
 
 ```python
@@ -217,9 +245,10 @@ SPARK25_DTYPE=bfloat16 \
     .venv/bin/python -m pytest -q
 ```
 
-The integration test performs strict weight loading and a real checkpoint
-forward pass. Always run an end-to-end generation command as well, because a
-successful shape test alone does not establish generation correctness.
+The integration test performs strict weight loading, validates complex
+function-call parsing, and runs a real checkpoint forward pass. Always run an
+end-to-end generation command as well, because a successful shape test alone
+does not establish generation correctness.
 
 The CUDA fix was validated with MLX 0.32.2, MLX LM 0.31.3, BF16 weights, and an
 NVIDIA H100 PCIe GPU:
