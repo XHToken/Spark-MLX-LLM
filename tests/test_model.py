@@ -110,6 +110,7 @@ def test_forward_shape_when_hidden_size_differs_from_head_geometry():
 
 
 def test_cached_decode_matches_full_forward():
+    mx.random.seed(0)
     model = Model(make_args())
     tokens = mx.array([[1, 2, 3]])
 
@@ -121,9 +122,16 @@ def test_cached_decode_matches_full_forward():
     )
     mx.eval(full_logits, cached_logits)
 
-    # CUDA attention kernels can differ slightly between batched prefill and
-    # token-by-token decode because their reduction orders are different.
-    assert mx.allclose(full_logits, cached_logits, rtol=2e-3, atol=2e-3)
+    assert mx.array_equal(
+        mx.argmax(full_logits, axis=-1),
+        mx.argmax(cached_logits, axis=-1),
+    )
+
+    # Fused attention kernels can use different reduction orders between
+    # batched prefill and token-by-token decode. The gap is larger on Metal.
+    is_metal = mx.default_device() == mx.gpu and mx.metal.is_available()
+    atol = 1e-2 if is_metal else 2e-3
+    assert mx.allclose(full_logits, cached_logits, rtol=2e-3, atol=atol)
 
 
 def test_attention_gates_are_excluded_from_quantization():
