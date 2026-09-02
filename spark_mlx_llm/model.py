@@ -58,8 +58,8 @@ class ModelArgs(BaseModelArgs):
                 "num_attention_heads must be divisible by num_key_value_heads"
             )
 
-        if self.hidden_size != self.num_attention_heads * self.head_dim:
-            raise ValueError("hidden_size must equal num_attention_heads * head_dim")
+        if self.num_attention_heads * self.head_dim <= 0:
+            raise ValueError("num_attention_heads * head_dim must be positive")
 
         if self.hidden_act != "gelu":
             raise ValueError(f"Spark2_5 requires GELU, got {self.hidden_act!r}")
