@@ -15,6 +15,7 @@ package.
 - BF16 and FP32 weight overrides
 - Sliding-window and full-attention KV caches
 - Automatic Spark2_5 function-call parsing through MLX LM
+- Spark2_5 wrappers for MLX LM conversion, chat, and server commands
 - Command-line and Python inference interfaces
 
 ## Supported model
@@ -134,6 +135,47 @@ Hugging Face repository IDs are also accepted:
 ```
 
 The repository must expose the model and tokenizer files required above.
+
+## MLX LM tool wrappers
+
+The package provides wrappers for MLX LM tools that need to resolve the
+Spark2_5 model architecture. Registration is limited to the command process;
+the wrappers do not modify the installed `mlx_lm` package.
+
+Convert or quantize a Hugging Face checkpoint:
+
+```sh
+.venv/bin/spark-mlx-convert \
+    --hf-path XHToken/Spark-X2.5-1.7B \
+    --mlx-path ./Spark-X2.5-1.7B-8bit \
+    --quantize \
+    --q-bits 8
+```
+
+The converter keeps the head-wise attention `g_proj` gates in BF16. These
+small sigmoid gates scale every attention head and are sensitive to low-bit
+quantization. Use 8-bit or BF16 weights for tool calling; 4-bit weights use
+less memory but can reduce the accuracy of schema-constrained arguments.
+
+Start an interactive chat session:
+
+```sh
+.venv/bin/spark-mlx-chat \
+    --model ./Spark-X2.5-1.7B-8bit
+```
+
+Start the OpenAI-compatible server:
+
+```sh
+.venv/bin/spark-mlx-server \
+    --model ./Spark-X2.5-1.7B-8bit \
+    --host 127.0.0.1 \
+    --port 8080
+```
+
+Use these `spark-mlx-*` commands until Spark2_5 is available in an official
+MLX LM release. If the installed MLX LM already provides a native Spark2_5
+module, the wrappers use it instead of the bundled implementation.
 
 ## Python API
 

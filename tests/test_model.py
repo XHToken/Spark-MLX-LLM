@@ -86,3 +86,17 @@ def test_cached_decode_matches_full_forward():
     # CUDA attention kernels can differ slightly between batched prefill and
     # token-by-token decode because their reduction orders are different.
     assert mx.allclose(full_logits, cached_logits, rtol=2e-3, atol=2e-3)
+
+
+def test_attention_gates_are_excluded_from_quantization():
+    model = Model(make_args())
+    predicate = model.quant_predicate
+
+    assert not predicate(
+        "model.layers.0.self_attn.g_proj",
+        model.layers[0].self_attn.g_proj,
+    )
+    assert predicate(
+        "model.layers.0.self_attn.out_proj",
+        model.layers[0].self_attn.out_proj,
+    )
