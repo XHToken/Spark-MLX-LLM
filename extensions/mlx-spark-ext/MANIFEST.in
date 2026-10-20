@@ -1,0 +1,6 @@
+include CMakeLists.txt
+include README.md
+include THIRD_PARTY.md
+recursive-include LICENSES *.txt
+recursive-include src *.cpp *.h *.metal
+recursive-include tests *.py

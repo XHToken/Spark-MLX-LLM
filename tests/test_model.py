@@ -110,6 +110,7 @@ def test_forward_shape_when_hidden_size_differs_from_head_geometry():
 
 
 def test_cached_decode_matches_full_forward():
+    mx.random.seed(42)
     model = Model(make_args())
     tokens = mx.array([[1, 2, 3]])
 
