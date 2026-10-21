@@ -3,13 +3,20 @@
 Spark2_5 inference support for [MLX](https://github.com/ml-explore/mlx) and
 [MLX LM](https://github.com/ml-explore/mlx-lm).
 
-The package loads the original Hugging Face `safetensors` checkpoint directly.
-It does not require GGUF conversion and does not modify the installed `mlx-lm`
-package.
+The package directly loads unquantized Hugging Face `safetensors` checkpoints
+and checkpoints already converted to MLX format. It does not require GGUF
+conversion and does not modify the installed `mlx-lm` package.
+
+**Compressed-tensors INT4/INT8 checkpoints, including
+`4b-head-only-int8-mse`, must be converted to MLX affine format before running
+generation, chat, or the server.** Follow the
+[conversion instructions](#convert-compressed-tensors-mixed-int4int8-checkpoints)
+and pass the **converted output directory** to `--model`.
 
 ## Features
 
-- Direct loading from a local Hugging Face checkpoint or repository ID
+- Direct loading of unquantized Hugging Face or MLX-format checkpoints from a
+  local directory or repository ID
 - Strict checkpoint weight-name and shape validation
 - CPU, Apple Silicon GPU, and optional Linux CUDA execution
 - BF16 and FP32 weight overrides
@@ -84,7 +91,125 @@ Confirm the installation:
 .venv/bin/python -c 'import mlx.core as mx; print(mx.__version__)'
 ```
 
+### Optional Spark C++ extension on Apple Silicon
+
+Install **`mlx-spark-ext`** in the same environment as `spark-mlx-generate`
+to enable the C++ QKV projection and RoPE path for supported single-token,
+batch-size-one affine W4 decoding. The model detects it automatically after
+restarting Python; no command-line flag is needed. It follows the
+[MLX custom extension mechanism](https://ml-explore.github.io/mlx/build/html/dev/extensions.html)
+and leaves the official `mlx.core` intact.
+
+The extension is a separate, optional package. Installing `spark-mlx-llm`
+alone does not install it. Its source is included in
+[`extensions/mlx-spark-ext`](extensions/mlx-spark-ext), so no separate MLX
+source checkout is needed.
+
+**Install a prebuilt wheel.** When available, download a matching
+`mlx_spark_ext-*.whl` asset from this repository's
+[GitHub Releases](https://github.com/XHToken/Spark-MLX-LLM/releases).
+If no matching asset has been published, use the source-build instructions below.
+The current build has these requirements:
+
+| Component | Requirement |
+| --- | --- |
+| Hardware | Apple Silicon (`arm64`) |
+| Python | Standard CPython 3.12 for the `cp312-cp312` wheel |
+| MLX | Official `mlx==0.32.4` and `mlx-metal==0.32.4` |
+| macOS | 26.2 or newer for the current binaries; tested on 26.5.1 |
+
+The wheel's `macosx_26_0_arm64` filename does not express the backend's
+26.2 minimum. Use the requirements in the release notes as well as the filename.
+
+From the repository root, replace the path below with the downloaded wheel:
+
+```sh
+.venv/bin/python -m pip install \
+  'mlx==0.32.4' 'mlx-metal==0.32.4' \
+  /path/to/mlx_spark_ext-0.2.0-cp312-cp312-macosx_26_0_arm64.whl
+```
+
+**Build from source.** Follow the
+[extension build instructions](extensions/mlx-spark-ext/README.md#build-from-source)
+for another supported Python version or when a wheel is unavailable. This
+compiles only the extension. Version 0.2.0 also builds Metal 4 W8A8 kernels
+and requires the corresponding Xcode Metal compiler and SDK headers.
+The current MLX backend's macOS requirement still applies.
+
+The extension also exposes an explicit
+[W8A8 linear API](extensions/mlx-spark-ext/README.md#w8a8-api) for Apple M5+.
+Installing it does not automatically change the model's quantization or
+replace its output projections.
+
+For an already converted MLX checkpoint, enable W8A8 by adding
+`input_activations` to each desired output projection's entry under
+`config.json` → `quantization_config`:
+
+```json
+"model.layers.0.self_attn.out_proj": {
+  "group_size": 32,
+  "bits": 8,
+  "mode": "affine",
+  "input_activations": {
+    "num_bits": 8,
+    "type": "int",
+    "strategy": "token",
+    "symmetric": true,
+    "dynamic": true
+  }
+}
+```
+
+Apply this to all output projections that should use W8A8. The separate
+`quantization` map continues to describe the existing packed weights, and
+the global `quantize_activations` setting stays false. Entries without
+`input_activations` retain their existing W8A16 behavior. This routing is
+implemented in the Spark model, using `mlx-spark-ext >= 0.2.0` on Apple M5+.
+If the extension cannot be imported, lacks the W8A8 API, or reports that the
+device is unsupported, the model loads these projections as ordinary MLX
+W8A16 `QuantizedLinear` layers. This fallback uses the existing packed weights
+and compiled attention output path without preparing an INT8 weight cache.
+With W8A8 support available, the configured layers continue to use W8A8.
+
+The W8A8 adapter accepts UINT32-packed 8-bit weights with repeated per-channel
+scales and affine offsets `biases = -128 * scales`. Loading validates this
+layout and caches an exact INT8 unpacking plus FP32 channel scales outside
+the checkpoint parameter tree. Existing BF16 scale values remain rounded;
+converting them to FP32 does not restore their original precision. Both
+prefill and single-token decode use INT8 activations. The packed checkpoint
+files and `sanitize()` behavior stay the same.
+
+**Verify the installation**, then run your usual generation command:
+
+```sh
+.venv/bin/python - <<'PY'
+from importlib.metadata import version
+import mlx.core as mx
+import mlx_spark_ext as ext
+from spark_mlx_llm import model
+
+assert version("mlx") == version("mlx-metal") == "0.32.4"
+assert model._native_qkv_rope is ext.spark_qkv_rope
+assert mx.metal.is_available()
+print("Extension ready:", version("mlx-spark-ext"))
+PY
+```
+
+If the extension is absent, generation uses the existing compiled or standard
+paths. An installed but incompatible extension raises an import error; install
+the matching build or remove it with
+`.venv/bin/python -m pip uninstall mlx-spark-ext`. Restart Python after either
+operation. CPU and CUDA users should omit this Apple Silicon build.
+
+The three Python `mx.compile` optimizations remain available independently of
+this extension on supported Metal paths. Installing the extension alone does
+not establish a performance improvement; measure your own workload.
+
 ## Quick start
+
+**For compressed-tensors quantized models, convert first, then run inference.**
+Use the [conversion tool](#convert-compressed-tensors-mixed-int4int8-checkpoints)
+below and replace the `--model` path in these examples with its output directory.
 
 Run deterministic CPU generation from a local checkpoint:
 
@@ -156,6 +281,57 @@ The converter keeps the head-wise attention `g_proj` gates in BF16. These
 small sigmoid gates scale every attention head and are sensitive to low-bit
 quantization. Use 8-bit or BF16 weights for tool calling; 4-bit weights use
 less memory but can reduce the accuracy of schema-constrained arguments.
+
+### Convert compressed-tensors mixed INT4/INT8 checkpoints
+
+**This conversion is required before using a compressed-tensors checkpoint
+with `spark-mlx-generate`, `spark-mlx-chat`, or `spark-mlx-server`.**
+For example, convert `4b-head-only-int8-mse` first and point `--model` at the
+resulting MLX directory.
+
+[`tools/convert_compressed_tensors_to_mlx.py`](tools/convert_compressed_tensors_to_mlx.py)
+converts Spark2_5 compressed-tensors checkpoints to native MLX affine
+`model.safetensors`, with configuration and tokenizer files. Run it with a
+Python environment containing NumPy; the conversion itself runs on CPU and
+does not require PyTorch, CUDA, or the Spark Metal extension.
+
+**All W8A8 layers become W8A16 with BF16 activations, including every attention
+`out_proj` and `lm_head`.** Input activation quantization is removed. The output
+uses ordinary MLX quantized layers and does not select the W8A8 extension path.
+This change is recorded in `config.json`, `conversion_manifest.json`, and
+`CONVERSION_NOTES.txt`, and printed by the command.
+
+The script retains the existing INT4/G32, G64, or G128 weight codes and the
+symmetric per-channel INT8 codes. Per-channel INT8 scales are repeated across
+MLX G32 groups. BF16 embedding, attention `g_proj`, and Norm weights are copied
+unchanged; `tie_word_embeddings` is preserved. **All affine scales and biases
+are stored in BF16**, so original FP32 scales and computed offsets may be
+rounded. The manifest records the maximum coefficient rounding error per
+module. Integer weights are not re-quantized, but the resulting inference is
+not numerically equivalent to the source W8A8 model.
+
+From the repository root, convert a local checkpoint into a new output directory:
+
+```sh
+.venv/bin/python tools/convert_compressed_tensors_to_mlx.py \
+    --source /path/to/compressed-tensors-checkpoint \
+    --output /path/to/spark-mlx-w8a16
+```
+
+The script reads local paths. Replace `--output ...` with `--inspect` to
+validate configuration and tensor shapes without writing a model.
+Existing output directories are never overwritten. Single-file and sharded
+Safetensors are supported; unhandled group-index/permutation tensors,
+activation schemes, weight transforms, and sparsity are rejected.
+
+Run the converted model through this package's Spark loader:
+
+```sh
+.venv/bin/spark-mlx-generate \
+    --model /path/to/spark-mlx-w8a16 \
+    --device gpu --dtype bfloat16 \
+    --prompt '你是谁，你能做什么？' --max-tokens 128 --temp 0
+```
 
 Start an interactive chat session:
 
@@ -311,6 +487,7 @@ end-to-end generation commands before deployment.
 spark_mlx_llm/model.py   Spark2_5 computation graph and cache selection
 spark_mlx_llm/loader.py  Local and Hugging Face checkpoint loading
 spark_mlx_llm/cli.py     Text generation command
+extensions/mlx-spark-ext/ Optional C++ extension package
 tests/                   Unit and real-checkpoint tests
 ```
 
