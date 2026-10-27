@@ -1,0 +1,35 @@
+[build-system]
+requires = [
+    "setuptools>=80",
+    "wheel",
+    "cmake>=3.25",
+    "nanobind==3.1.0",
+    "mlx==0.32.4",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spark-mlx-ext"
+version = "0.2.0"
+description = "Spark QKV, RoPE, W8A16 per-channel and W8A8 TensorOps extension for MLX"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "LICENSES/*.txt", "THIRD_PARTY.md"]
+requires-python = ">=3.11"
+dependencies = ["mlx==0.32.4"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "RUF022", "SIM117"]
+
+[tool.ruff.lint.per-file-ignores]
+"spark_mlx_ext/__init__.py" = ["E402"]
+
+[tool.setuptools]
+packages = ["spark_mlx_ext"]
+
+[tool.setuptools.package-data]
+spark_mlx_ext = ["*.pyi", "py.typed", "*.metallib"]

@@ -1,0 +1,9 @@
+include CMakeLists.txt README.md README.zh.md THIRD_PARTY.md
+recursive-include LICENSES *.txt
+recursive-include src *.cpp *.h *.metal
+
+prune docs
+prune tests
+prune tools
+exclude AGENTS.md .clang-format
+global-exclude __pycache__ *.py[cod] *.so *.metallib .DS_Store

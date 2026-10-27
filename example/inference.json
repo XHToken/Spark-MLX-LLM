@@ -1,0 +1,9 @@
+{
+  "max_tokens": 2048,
+  "temperature": 0.0,
+  "top_p": 1.0,
+  "top_k": 0,
+  "min_p": 0.0,
+  "enable_thinking": true,
+  "reasoning_effort": "low"
+}
