@@ -11,28 +11,24 @@ requires-python = ">=3.10"
 license = { file = "LICENSE" }
 dependencies = [
     "mlx-lm>=0.31.3,<0.32",
+    "spark-mlx-ext==0.2.0; sys_platform == 'darwin' and platform_machine == 'arm64' and python_version >= '3.11'",
 ]
 
 [project.optional-dependencies]
-cpu = ["mlx[cpu]>=0.32.1"]
 cuda12 = ["mlx[cuda12]>=0.32.1"]
 cuda13 = ["mlx[cuda13]>=0.32.1"]
-test = ["pytest>=8", "ruff>=0.12"]
 
 [project.scripts]
-spark-mlx-generate = "spark_mlx_llm.cli:main"
-spark-mlx-convert = "spark_mlx_llm.mlx_tools:convert_main"
-spark-mlx-chat = "spark_mlx_llm.mlx_tools:chat_main"
-spark-mlx-server = "spark_mlx_llm.mlx_tools:server_main"
+spark-mlx-generate = "spark_mlx_llm.commands.generate:main"
+spark-mlx-convert = "spark_mlx_llm.commands.convert:main"
+spark-mlx-chat = "spark_mlx_llm.commands.chat:main"
+spark-mlx-server = "spark_mlx_llm.commands.server:main"
+
+[tool.uv.sources]
+spark-mlx-ext = { path = "extensions/spark-mlx-ext", editable = true }
 
 [tool.setuptools.packages.find]
 include = ["spark_mlx_llm*"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-markers = [
-    "integration: requires the full Spark2_5 checkpoint",
-]
 
 [tool.ruff]
 line-length = 88

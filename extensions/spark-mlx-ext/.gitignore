@@ -1,0 +1,14 @@
+/build/
+/dist/
+/*.egg-info/
+__pycache__/
+*.so
+*.metallib
+.pytest_cache/
+.ruff_cache/
+
+# Local development material; not part of the public package.
+/tests/
+/tools/
+/docs/
+/AGENTS.md
