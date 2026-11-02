@@ -21,6 +21,7 @@ __all__ = [
     "W8A8Projection",
     "W8A8QuantizedLinear",
     "W8A16PerChannelLinear",
+    "W8MultirowProjection",
     "dispatch_linear",
 ]
 
@@ -30,12 +31,26 @@ except ImportError:
     w4a16_qmv = None
 
 try:
+    from spark_mlx_ext import w4a16_multirow
+    from spark_mlx_ext.w4a16_multirow import prepare_w4a16_nax4
+except ImportError:
+    w4a16_multirow = None
+    prepare_w4a16_nax4 = None
+
+try:
     from spark_mlx_ext import w8a16_per_channel
 except ImportError:
     w8a16_per_channel = None
 
+try:
+    from spark_mlx_ext import is_w8a8_available, w8a16_multirow
+except ImportError:
+    w8a16_multirow = None
+    is_w8a8_available = None
+
 # (N, K): measured QKV and MLP-down shapes for the 4B model.
 _SPLITK_SHAPES = frozenset(((6144, 2560), (2560, 10240)))
+_MULTIROW_SHAPES = _SPLITK_SHAPES | {(10240, 2560)}
 
 
 @dataclass(kw_only=True)
@@ -49,10 +64,12 @@ class LinearConfig(OperatorConfig):
     """
 
     w8_qmv_backend: str = field(
-        default="w8a16", metadata={"choices": ("auto", "native", "w8a16", "w8a8")}
+        default="w8a16",
+        metadata={"choices": ("auto", "native", "w8a16", "w8a8", "multirow")},
     )
     w4_qmv_backend: str = field(
-        default="native", metadata={"choices": ("native", "splitk")}
+        default="native",
+        metadata={"choices": ("native", "splitk", "multirow", "multirow_packed")},
     )
 
     @classmethod
@@ -71,9 +88,9 @@ def dispatch_linear(x, projection, *, config: LinearConfig | None = None):
     Prepared W8 modules apply their own input/device fallback when called.
     """
     config = config if config is not None else LinearConfig()
-    if config.w4_qmv_backend == "splitk" and AffineParameters.accepts(projection):
-        params = AffineParameters.from_module(projection)
-        return params.select(x.shape, x.dtype, config)(x, *params)
+    if config.w4_qmv_backend != "native" and AffineParameters.accepts(projection):
+        project, params = AffineParameters.resolve(projection, x.shape, x.dtype, config)
+        return project(x, *params)
     return projection(x)
 
 
@@ -96,7 +113,31 @@ class AffineParameters(NamedTuple):
             layer.weight, layer.scales, layer.biases, layer.group_size, layer.bits
         )
 
+    @classmethod
+    def resolve(cls, layer, shape, dtype, config):
+        """Choose a pure projection and explicit current tensors before tracing.
+
+        Prepared buffers remain outside the checkpoint parameter tree. Replacing
+        any source array rebuilds them; compiled callers receive the new arrays
+        as inputs, never through captured closures or tracer-object identity.
+        """
+        params = cls.from_module(layer)
+        if (
+            config.w4_qmv_backend == "multirow_packed"
+            and params.supports_multirow(shape, dtype, *params)
+            and callable(prepare_w4a16_nax4)
+            and callable(is_w8a8_available)
+            and is_w8a8_available()
+        ):
+            prepared = _w4_packed_parameters(layer)
+            return cls.multirow_packed, cls(*prepared, params.group_size, params.bits)
+        return params.select(shape, dtype, config), params
+
     def select(self, shape, dtype, config: LinearConfig):
+        if config.w4_qmv_backend == "multirow" and self.supports_multirow(
+            shape, dtype, *self
+        ):
+            return self.multirow
         if config.w4_qmv_backend == "splitk" and self.supports_splitk(
             shape, dtype, *self
         ):
@@ -150,6 +191,59 @@ class AffineParameters(NamedTuple):
         )
 
     @staticmethod
+    def supports_multirow(shape, dtype, weight, scales, biases, group_size, bits):
+        """Eight-row BF16/G32 verification geometries with measured gains."""
+        return (
+            callable(w4a16_multirow)
+            and bits == 4
+            and group_size == 32
+            and len(shape) >= 2
+            and prod(shape[:-1]) == 8
+            and weight.ndim == 2
+            and (weight.shape[0], shape[-1]) in _MULTIROW_SHAPES
+            and weight.shape[1] * 8 == shape[-1]
+            and scales.shape == (weight.shape[0], shape[-1] // 32)
+            and biases is not None
+            and biases.shape == scales.shape
+            and dtype == scales.dtype == biases.dtype == mx.bfloat16
+            and weight.dtype == mx.uint32
+            and mx.default_device() == mx.gpu
+            and mx.metal.is_available()
+        )
+
+    @staticmethod
+    def multirow(x, weight, scales, biases, group_size, bits):
+        if not callable(w4a16_multirow):
+            raise RuntimeError(  # noqa: TRY004 -- optional extension is unavailable
+                "w4_qmv_backend='multirow' requires spark-mlx-ext.w4a16_multirow"
+            )
+        return w4a16_multirow(
+            x, weight, scales, biases, algorithm="wide", k_lanes=8, simdgroups=8
+        )
+
+    @staticmethod
+    def multirow_packed(x, weight, scales, biases, group_size, bits):
+        if not callable(w4a16_multirow):
+            raise RuntimeError(  # noqa: TRY004 -- optional extension is unavailable
+                "multirow_packed requires spark-mlx-ext.w4a16_multirow"
+            )
+        splits, simdgroups = {
+            (6144, 2560): (8, 4),
+            (10240, 2560): (4, 4),
+            (2560, 10240): (4, 2),
+        }[(weight.shape[0], x.shape[-1])]
+        return w4a16_multirow(
+            x,
+            weight,
+            scales,
+            biases,
+            algorithm="nax4",
+            layout="nax_tiled256",
+            splits=splits,
+            simdgroups=simdgroups,
+        )
+
+    @staticmethod
     def splitk(x, weight, scales, biases, group_size, bits):
         """Affine-compatible signature; select() must first choose supported W4/G32.
 
@@ -161,6 +255,17 @@ class AffineParameters(NamedTuple):
                 "w4a16_qmv API; install or update the local extension"
             )
         return w4a16_qmv(x, weight, scales, biases)
+
+
+def _w4_packed_parameters(layer):
+    """Lazily derive buffers for current immutable array objects, without eval."""
+    sources = (layer.weight, layer.scales, layer.biases)
+    cached = getattr(layer, "_spark_w4_packed", None)
+    if cached is not None and all(old is new for old, new in zip(cached[0], sources)):
+        return cached[1]
+    prepared = prepare_w4a16_nax4(*sources)
+    object.__setattr__(layer, "_spark_w4_packed", (sources, prepared))
+    return prepared
 
 
 def _get_w8a8_operation():
@@ -371,6 +476,58 @@ class W8A16PerChannelLinear(nn.Module):
         return w8a16_per_channel(x, weight, scales)
 
 
+class W8MultirowProjection(nn.Module):
+    """W8 out/head projections for measured M8 verification; else use MLX.
+
+    Unpacked weights and original FP32 channel scales are derived at load time.
+    M1 decode and prefill retain the original affine layer and output dtype.
+    """
+
+    def __init__(self, fallback, weight, scales):
+        super().__init__()
+        if (
+            type(fallback) is not nn.QuantizedLinear
+            or fallback.bits != 8
+            or fallback.mode != "affine"
+            or "bias" in fallback
+            or fallback.biases is None
+            or fallback.scales.dtype not in (mx.bfloat16, mx.float32)
+            or fallback.biases.dtype != fallback.scales.dtype
+            or weight.dtype != mx.int8
+            or weight.shape not in ((131072, 2560), (2560, 4096))
+            or scales.dtype != mx.float32
+            or scales.shape != (weight.shape[0],)
+            or fallback.weight.shape != (weight.shape[0], weight.shape[1] // 4)
+        ):
+            raise ValueError(
+                "Multirow W8 requires measured out/head per-channel geometry"
+            )
+        self.fallback, self.weight, self.scales = fallback, weight, scales
+        self.freeze()
+
+    def __call__(self, x):
+        if (
+            callable(w8a16_multirow)
+            and callable(is_w8a8_available)
+            and is_w8a8_available()
+            and x.ndim >= 2
+            and prod(x.shape[:-1]) == 8
+            and x.shape[-1] == self.weight.shape[-1]
+            and x.dtype == mx.bfloat16
+            and mx.default_device() == mx.gpu
+            and mx.metal.is_available()
+        ):
+            return w8a16_multirow(
+                x,
+                self.weight,
+                self.scales,
+                output_dtype=self.fallback.scales.dtype,
+                variant="nax",
+                simdgroups=4,
+            )
+        return self.fallback(x)
+
+
 class W8A8Projection(nn.Module):
     """Experimental W8A8 arithmetic with an affine CPU fallback.
 
@@ -451,10 +608,49 @@ class QuantizedProjections:
 
     @staticmethod
     def unwrap(model):
+        for projection in QuantizedProjections._w4_projections(model):
+            if hasattr(projection, "_spark_w4_packed"):
+                object.__delattr__(projection, "_spark_w4_packed")
         for _, parent, attribute in QuantizedProjections._projections(model):
             projection = getattr(parent, attribute)
-            if type(projection) in (W8A16PerChannelLinear, W8A8Projection):
+            if type(projection) in (
+                W8A16PerChannelLinear,
+                W8A8Projection,
+                W8MultirowProjection,
+            ):
                 setattr(parent, attribute, projection.fallback)
+
+    @staticmethod
+    def _w4_projections(model):
+        for layer in model.layers:
+            qkv = getattr(layer.self_attn, "q_k_v_proj", None)
+            if qkv is not None:
+                yield qkv
+            mlp = getattr(layer, "mlp", None)
+            for name in ("gate_proj", "up_proj", "down_proj"):
+                projection = getattr(mlp, name, None)
+                if projection is not None:
+                    yield projection
+
+    @staticmethod
+    def _prepare_w4(model):
+        if getattr(model.args, "w4_qmv_backend", "native") != "multirow_packed":
+            return
+        if not (
+            callable(prepare_w4a16_nax4)
+            and callable(is_w8a8_available)
+            and is_w8a8_available()
+            and mx.default_device() == mx.gpu
+            and mx.metal.is_available()
+        ):
+            return
+        for layer in QuantizedProjections._w4_projections(model):
+            if AffineParameters.accepts(layer):
+                params = AffineParameters.from_module(layer)
+                if params.supports_multirow(
+                    (1, 8, layer.weight.shape[1] * 8), mx.bfloat16, *params
+                ):
+                    mx.eval(_w4_packed_parameters(layer))
 
     @staticmethod
     def _configure(model, backend):
@@ -473,6 +669,8 @@ class QuantizedProjections:
             return
         if backend == "w8a16" and not callable(w8a16_per_channel):
             return
+        if backend == "multirow" and not callable(w8a16_multirow):
+            return
         if backend == "w8a8" and _get_w8a8_operation() is None:
             return
         candidates = [
@@ -484,15 +682,28 @@ class QuantizedProjections:
         # Unquantized and W4-only checkpoints have no W8 projections to adapt.
         replacements = []
         for name, parent, attribute, layer in candidates:
+            if backend == "multirow" and (
+                layer.weight.shape not in ((131072, 640), (2560, 1024))
+                or layer.scales.dtype not in (mx.bfloat16, mx.float32)
+                or layer.biases is None
+                or layer.biases.dtype != layer.scales.dtype
+                or layer.mode != "affine"
+                or "bias" in layer
+            ):
+                continue
             if backend == "w8a16" and (layer.mode != "affine" or "bias" in layer):
                 continue
             parameters = _unpack_affine_w8(
-                layer, name, allow_fallback=backend == "w8a16"
+                layer, name, allow_fallback=backend in ("w8a16", "multirow")
             )
             if parameters is None:
                 continue
             weight, scales = parameters
-            adapter = W8A16PerChannelLinear if backend == "w8a16" else W8A8Projection
+            adapter = {
+                "w8a16": W8A16PerChannelLinear,
+                "multirow": W8MultirowProjection,
+                "w8a8": W8A8Projection,
+            }[backend]
             replacements.append((parent, attribute, adapter(layer, weight, scales)))
         # Validate everything before mutating any module.
         for parent, attribute, projection in replacements:
@@ -504,7 +715,7 @@ class QuantizedProjections:
         paths = set()
         for name, parent, attribute in QuantizedProjections._projections(model):
             projection = getattr(parent, attribute)
-            if type(projection) is W8A16PerChannelLinear:
+            if type(projection) in (W8A16PerChannelLinear, W8MultirowProjection):
                 paths.add(name + ".scales")
             elif type(projection) is W8A8Projection:
                 paths.add(name + ".projection.scales")
@@ -517,3 +728,4 @@ class QuantizedProjections:
             if isinstance(projection, W8A8QuantizedLinear):
                 projection.prepare_parameters()
         QuantizedProjections._configure(model, model.args.w8_qmv_backend)
+        QuantizedProjections._prepare_w4(model)

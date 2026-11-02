@@ -64,15 +64,16 @@ def dispatch_qkv(
             offset=offset,
         )
     if quantized_qkv:
+        project, params = AffineParameters.resolve(projection, x.shape, x.dtype, config)
         fused_qkv = _make_compiled_projection(
             q_size,
             kv_size,
             n_heads,
             n_kv_heads,
             head_dim,
-            AffineParameters.splitk if splitk_qkv else AffineParameters.native,
+            project,
         )
-        queries, keys, values = fused_qkv(x, AffineParameters.from_module(projection))
+        queries, keys, values = fused_qkv(x, params)
     else:
         queries, keys, values = _module_projection(
             x,

@@ -9,3 +9,4 @@
 | Shared inference settings / 公共推理配置 | [English](en/examples.md#5-shared-inference-settings) · [中文](zh/examples.md#5-公共推理配置) |
 | Model quantization and conversion / 模型量化与转换 | [English](en/conversion.md) · [中文](zh/conversion.md) |
 | Benchmarks / 性能测试 | [English](en/benchmark.md) · [中文](zh/benchmark.md) |
+| DSpark usage / DSpark 使用 | [English](../README.md#dspark-models) · [中文](../README.zh.md#dspark-模型使用) |
