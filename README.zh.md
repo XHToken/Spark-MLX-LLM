@@ -17,6 +17,7 @@ Spark-MLX-LLM 是面向 **Spark 2.6 和 Spark 2.5** 的本地推理项目，基�
 
 - **星火模型适配与转换**：将 BF16 和 compressed-tensors INT4 checkpoint 转换为 MLX 格式。
 - **混合精度量化**：按模块采用 INT4、INT8、BF16 权重，并支持配置 W8 执行后端。
+- **DSpark 推测解码**：加载主模型与草稿模型的合并检查点，支持分别配置两侧采样参数。
 - **Apple Silicon 推理优化**：提供专用 QKV/RoPE、线性层和 INT8 KV 注意力算子，
   根据配置、设备与输入形状选择执行路径。
 - **多种使用方式**：提供命令行生成与聊天、Python 普通与流式生成 API，以及 HTTP 服务。
@@ -119,6 +120,59 @@ Linux/CUDA 安装方式、环境检查与常见问题见[环境配置说明](doc
 `generate`、`chat`、`server`、Python 普通与流式生成 API，以及 HTTP 请求的完整用法见
 [接口使用说明](docs/zh/examples.md)。
 
+## DSpark 模型使用
+
+DSpark 需要本地的**主模型与草稿模型合并检查点**，目录包含带 DSpark 配置的
+`config.json`、分词器文件，以及含 `draft_model.*` 张量的 Safetensors 权重。
+加载器支持 BF16 或 MLX 仿射量化的主模型，草稿模型保持未量化。
+仅含主模型权重的普通 Spark 检查点不能直接开启 DSpark。
+
+完成环境安装后，在仓库根目录运行：
+
+```sh
+# 检查配置与草稿权重形状，不加载权重数据。
+.venv/bin/python -m spark_mlx_llm.dspark inspect /path/to/merged-checkpoint
+
+# 使用 DSpark 生成，默认贪心采样、整块验证。
+.venv/bin/python -m spark_mlx_llm.dspark generate \
+    --model /path/to/merged-checkpoint \
+    --prompt '请用一段话解释推测解码。' \
+    --max-new-tokens 512 --stats
+
+# 主模型随机采样，草稿模型使用贪心。
+.venv/bin/python -m spark_mlx_llm.dspark generate \
+    --model /path/to/merged-checkpoint \
+    --prompt '请写一个关于机器人的短故事。' \
+    --temperature 1 --top-p 0.95 --top-k 0 \
+    --draft-temperature 0 --draft-top-p 1 --draft-top-k 0 \
+    --max-new-tokens 512 --stats
+```
+
+在生成命令后追加 `--mode baseline`，可使用同一合并检查点仅运行主模型生成。
+未指定的 draft 采样参数逐项继承主模型设置；`--max-draft-tokens N` 限制每轮候选数，
+设为零则禁用草稿生成。`--stats` 将统计写入 stderr，`--json` 以 JSON 返回文本和指标。
+默认应用模型聊天模板，`--raw-prompt` 可跳过模板。
+
+Python 接口支持相同配置：
+
+```python
+from spark_mlx_llm.dspark import SamplingOptions, generate, load_pair
+
+pair = load_pair("/path/to/merged-checkpoint")
+result = generate(
+    pair,
+    "请解释推测解码。",
+    max_new_tokens=512,
+    sampling=SamplingOptions(temperature=1.0, top_p=0.95),
+    draft_sampling=SamplingOptions(temperature=0.0),
+)
+print(result.text)
+print(result.draft_acceptance_rate, result.mean_acceptance_length)
+```
+
+当前 DSpark 一次处理一个请求。完整命令行参数可运行
+`.venv/bin/python -m spark_mlx_llm.dspark generate --help` 查看。
+
 ## 量化与兼容性说明
 
 默认转换对主模型采用以下方案。解码器内的模块在每层使用相同方案，embedding 和
@@ -159,6 +213,7 @@ Linux/CUDA 安装方式、环境检查与常见问题见[环境配置说明](doc
 | CLI、Python、HTTP 与思考模式 | [接口使用说明](docs/zh/examples.md) |
 | 模型转换与量化 | [模型转换](docs/zh/conversion.md) |
 | 性能测试命令与指标口径 | [Benchmark 指南](docs/zh/benchmark.md) |
+| DSpark 生成、采样与 Python 接口 | [DSpark 使用方法](#dspark-模型使用) |
 
 ## 许可证
 

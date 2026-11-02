@@ -17,6 +17,7 @@ class SDPAConfig(OperatorConfig):
     fused_quantized_sdpa: bool = True
     fused_quantized_sdpa_prefill: bool = False
     tuned_bf16_sdpa: bool = False
+    verification_bf16_sdpa: bool = False
 
 
 try:
@@ -28,6 +29,11 @@ try:
     from spark_mlx_ext import bf16_sdpa
 except ImportError:
     bf16_sdpa = None
+
+try:
+    from spark_mlx_ext import bf16_sdpa_multiquery
+except ImportError:
+    bf16_sdpa_multiquery = None
 
 
 def dispatch_sdpa(
@@ -52,6 +58,16 @@ def dispatch_sdpa(
     ):
         return _int8_attention(
             queries, keys, values, cache=cache, scale=scale, mask=mask
+        )
+    if (
+        config.verification_bf16_sdpa
+        and is_sliding
+        and _supports_verification_bf16(
+            queries, keys, values, cache=cache, scale=scale, mask=mask
+        )
+    ):
+        return _verification_bf16_attention(
+            queries, keys, values, scale=scale, mask=mask
         )
     if (
         config.tuned_bf16_sdpa
@@ -105,6 +121,25 @@ def _supports_bf16(queries, keys, values, *, mask):
     )
 
 
+def _supports_verification_bf16(queries, keys, values, *, cache, scale, mask):
+    return (
+        callable(bf16_sdpa_multiquery)
+        and isinstance(queries, mx.array)
+        and isinstance(keys, mx.array)
+        and isinstance(values, mx.array)
+        and queries.shape == (1, 16, 8, 256)
+        and keys.shape == values.shape == (1, 4, 519, 256)
+        and queries.dtype == keys.dtype == values.dtype == mx.bfloat16
+        and getattr(cache, "bits", None) is None
+        and scale == 0.0625
+        and isinstance(mask, mx.array)
+        and mask.dtype == mx.bool_
+        and mask.shape == (8, 519)
+        and mx.default_device() == mx.gpu
+        and mx.metal.is_available()
+    )
+
+
 def _native_attention(queries, keys, values, *, cache, scale, mask):
     return scaled_dot_product_attention(
         queries, keys, values, cache=cache, scale=scale, mask=mask
@@ -135,3 +170,11 @@ def _bf16_attention(queries, keys, values, *, scale, mask):
             "install the updated extension package and restart Python"
         )
     return bf16_sdpa(queries, keys, values, scale=scale, mask=mask)
+
+
+def _verification_bf16_attention(queries, keys, values, *, scale, mask):
+    if not callable(bf16_sdpa_multiquery):
+        raise RuntimeError(  # noqa: TRY004 -- missing optional extension
+            "verification_bf16_sdpa requires spark-mlx-ext.bf16_sdpa_multiquery"
+        )
+    return bf16_sdpa_multiquery(queries, keys, values, scale=scale, mask=mask)

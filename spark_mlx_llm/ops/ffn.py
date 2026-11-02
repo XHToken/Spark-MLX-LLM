@@ -49,25 +49,45 @@ def dispatch_ffn(x, attention_output, norm, mlp, *, mlp_type):
             down_dtype,
             *AffineParameters.from_module(down),
         )
-    compiled_ffn = _make_compiled_ffn(
-        AffineParameters.splitk if use_splitk else AffineParameters.native
-    )
+    gate_project = up_project = None
+    down_project = AffineParameters.splitk if use_splitk else AffineParameters.native
+    gate_params = AffineParameters.from_module(gate)
+    up_params = AffineParameters.from_module(up)
+    down_params = AffineParameters.from_module(down)
+    if mlp.linear_config.w4_qmv_backend in ("multirow", "multirow_packed"):
+        norm_dtype = mx.result_type(x, attention_output, norm.weight)
+        gate_project, gate_params = AffineParameters.resolve(
+            gate, x.shape, norm_dtype, mlp.linear_config
+        )
+        up_project, up_params = AffineParameters.resolve(
+            up, x.shape, norm_dtype, mlp.linear_config
+        )
+        down_dtype = mx.result_type(
+            norm_dtype, gate.scales, gate.biases, up.scales, up.biases
+        )
+        down_project, down_params = AffineParameters.resolve(
+            down, (*x.shape[:-1], up.weight.shape[0]), down_dtype, mlp.linear_config
+        )
+    compiled_ffn = _make_compiled_ffn(down_project, gate_project, up_project)
     return compiled_ffn(
         x,
         attention_output,
         norm.weight,
-        AffineParameters.from_module(gate),
-        AffineParameters.from_module(up),
-        AffineParameters.from_module(down),
+        gate_params,
+        up_params,
+        down_params,
         norm.eps,
     )
 
 
 @cache
-def _make_compiled_ffn(down_project=AffineParameters.native):
+def _make_compiled_ffn(
+    down_project=AffineParameters.native, gate_project=None, up_project=None
+):
     """Cache a graph with the down-projection selected by dispatch_ffn.
 
-    Gate/up always use MLX affine arithmetic. Passing the selected callable
+    Gate/up use native arithmetic unless an explicit multirow route is selected.
+    Passing the selected callable
     keeps native and split-K graphs separate without capturing model weights.
     """
 
@@ -77,8 +97,8 @@ def _make_compiled_ffn(down_project=AffineParameters.native):
     ):
         hidden_states = x + attention_output
         normed = mx.fast.rms_norm(hidden_states, norm_weight, eps)
-        gate = AffineParameters.native(normed, *gate_params)
-        up = AffineParameters.native(normed, *up_params)
+        gate = (gate_project or AffineParameters.native)(normed, *gate_params)
+        up = (up_project or AffineParameters.native)(normed, *up_params)
         mlp_output = down_project(nn.gelu(gate) * up, *down_params)
         return hidden_states + mlp_output
 

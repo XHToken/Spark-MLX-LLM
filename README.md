@@ -21,6 +21,8 @@ Spark models easier to deploy and use locally.
   INT4 checkpoints to MLX format.
 - **Mixed-precision quantization:** use INT4, INT8, and BF16 weights for different
   modules, with configurable W8 execution backends.
+- **DSpark speculative decoding:** generate with a merged target/draft checkpoint,
+  with independent target and draft sampling settings.
 - **Apple Silicon optimizations:** dedicated QKV/RoPE, linear, and INT8 KV
   attention operators, selected according to configuration, device, and input shape.
 - **Multiple interfaces:** command-line generation and chat, Python generation
@@ -130,6 +132,61 @@ for chat, streaming responses, and text completion.
 See the [complete interface guide](docs/en/examples.md) for `generate`, `chat`,
 `server`, Python generation and streaming APIs, and HTTP requests.
 
+## DSpark models
+
+DSpark requires a local **merged checkpoint containing both the Spark target and
+draft model**: `config.json` with DSpark configuration, tokenizer files, and
+Safetensors weights including `draft_model.*` tensors. The loader supports BF16
+or MLX affine-quantized target weights with an unquantized draft model. A regular
+Spark checkpoint containing only target weights cannot enable DSpark.
+
+After installing the project, run these commands from the repository root:
+
+```sh
+# Check checkpoint metadata and draft tensor shapes without loading weights.
+.venv/bin/python -m spark_mlx_llm.dspark inspect /path/to/merged-checkpoint
+
+# Generate with DSpark; greedy sampling and batched verification are the defaults.
+.venv/bin/python -m spark_mlx_llm.dspark generate \
+    --model /path/to/merged-checkpoint \
+    --prompt 'Explain speculative decoding in one paragraph.' \
+    --max-new-tokens 512 --stats
+
+# Sample from the target while using a greedy draft.
+.venv/bin/python -m spark_mlx_llm.dspark generate \
+    --model /path/to/merged-checkpoint \
+    --prompt 'Write a short story about a robot.' \
+    --temperature 1 --top-p 0.95 --top-k 0 \
+    --draft-temperature 0 --draft-top-p 1 --draft-top-k 0 \
+    --max-new-tokens 512 --stats
+```
+
+Add `--mode baseline` to use only the target for generation from the same merged
+checkpoint. Each omitted draft sampling option inherits its target counterpart.
+`--max-draft-tokens N` caps candidates per round; zero disables drafting.
+`--stats` writes statistics to stderr; `--json` returns text and metrics as JSON.
+The model's chat template is applied by default; `--raw-prompt` skips it.
+
+Python exposes the same controls:
+
+```python
+from spark_mlx_llm.dspark import SamplingOptions, generate, load_pair
+
+pair = load_pair("/path/to/merged-checkpoint")
+result = generate(
+    pair,
+    "Explain speculative decoding.",
+    max_new_tokens=512,
+    sampling=SamplingOptions(temperature=1.0, top_p=0.95),
+    draft_sampling=SamplingOptions(temperature=0.0),
+)
+print(result.text)
+print(result.draft_acceptance_rate, result.mean_acceptance_length)
+```
+
+DSpark currently handles one request at a time. Run
+`.venv/bin/python -m spark_mlx_llm.dspark generate --help` for all CLI options.
+
 ## Quantization and compatibility
 
 The default conversion applies the following scheme to the main model. Decoder
@@ -175,6 +232,7 @@ See the [documentation index](docs/README.md) for all guides.
 | CLI, Python, HTTP, and thinking settings | [Interface guide](docs/en/examples.md) |
 | Model conversion and quantization | [Conversion guide](docs/en/conversion.md) |
 | Benchmark commands and metric definitions | [Benchmark guide](docs/en/benchmark.md) |
+| DSpark generation, sampling, and Python APIs | [DSpark usage](#dspark-models) |
 
 ## License
 

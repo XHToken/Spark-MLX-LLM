@@ -7,7 +7,8 @@ select the module, compiled affine or compiled per-channel W8A16 path.
 import mlx.core as mx
 from mlx import nn
 
-from .linear import AffineParameters, W8A16PerChannelLinear
+from . import linear
+from .linear import AffineParameters, W8A16PerChannelLinear, W8MultirowProjection
 
 __all__ = ["dispatch_attention_output"]
 
@@ -19,6 +20,21 @@ def dispatch_attention_output(x, output, gate_projection, output_projection):
         and type(gate_projection) is nn.Linear
         and "bias" not in gate_projection
     )
+    if compile_output and type(projection) is W8MultirowProjection:
+        if (
+            x.shape[:2] == (1, 8)
+            and output.dtype == mx.bfloat16
+            and projection.weight.shape == (2560, 4096)
+            and projection.fallback.scales.dtype == mx.bfloat16
+            and callable(linear.w8a16_multirow)
+            and callable(linear.is_w8a8_available)
+            and linear.is_w8a8_available()
+            and mx.default_device() == mx.gpu
+        ):
+            return _compiled_w8_multirow_output(
+                x, output, gate_projection.weight, projection.weight, projection.scales
+            )
+        projection = projection.fallback
     if compile_output and type(projection) is W8A16PerChannelLinear:
         if W8A16PerChannelLinear.supports_rows(x.shape[0] * x.shape[1], output.dtype):
             return _compiled_w8a16_output(
@@ -33,6 +49,21 @@ def dispatch_attention_output(x, output, gate_projection, output_projection):
             AffineParameters.from_module(projection),
         )
     return _module_output(x, output, gate_projection, output_projection)
+
+
+@mx.compile
+def _compiled_w8_multirow_output(x, output, gate_weight, weight, scales):
+    output = mx.contiguous(output.transpose(0, 2, 1, 3))
+    gate = mx.sigmoid((x @ gate_weight.T).astype(mx.float32)).astype(output.dtype)
+    output = output * gate[..., None]
+    return linear.w8a16_multirow(
+        output.reshape(x.shape[0], x.shape[1], -1),
+        weight,
+        scales,
+        output_dtype=mx.bfloat16,
+        variant="nax",
+        simdgroups=4,
+    )
 
 
 @mx.compile

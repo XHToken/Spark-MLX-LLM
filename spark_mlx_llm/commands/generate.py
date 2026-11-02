@@ -36,18 +36,19 @@ def build_parser():
         "--w8-qmv-backend",
         choices=LinearConfig.choices("w8_qmv_backend"),
         default=None,
-        help="Existing W8 out_proj/lm_head only: w8a16 (default), native, auto, w8a8; leaves W4 layers unchanged",
+        help="W8 out_proj/lm_head: w8a16 (default), native, auto, w8a8, or multirow for eight-token verification",
     )
     parser.add_argument(
         "--w4-qmv-backend",
         choices=LinearConfig.choices("w4_qmv_backend"),
         default=None,
-        help="W4 QKV/down decode: native (default) or optimized splitk",
+        help="W4 execution: native, single-token splitk, or eight-token multirow / multirow_packed",
     )
     for name in (
         "fused_quantized_sdpa",
         "fused_quantized_sdpa_prefill",
         "tuned_bf16_sdpa",
+        "verification_bf16_sdpa",
     ):
         parser.add_argument(
             "--" + name.replace("_", "-"),
