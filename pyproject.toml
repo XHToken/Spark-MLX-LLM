@@ -11,10 +11,14 @@ requires-python = ">=3.10"
 license = { file = "LICENSE" }
 dependencies = [
     "mlx-lm>=0.31.3,<0.32",
-    "spark-mlx-ext==0.2.0; sys_platform == 'darwin' and platform_machine == 'arm64' and python_version >= '3.11'",
 ]
 
 [project.optional-dependencies]
+# Optional accelerated kernels require macOS >= 26.2 and a Metal 4 Xcode toolchain.
+# Default installs use native MLX; opt in with: uv sync --locked --extra metal4
+metal4 = [
+    "spark-mlx-ext==0.2.0; sys_platform == 'darwin' and platform_machine == 'arm64' and python_version >= '3.11'",
+]
 cuda12 = ["mlx[cuda12]>=0.32.1"]
 cuda13 = ["mlx[cuda13]>=0.32.1"]
 
@@ -23,6 +27,11 @@ spark-mlx-generate = "spark_mlx_llm.commands.generate:main"
 spark-mlx-convert = "spark_mlx_llm.commands.convert:main"
 spark-mlx-chat = "spark_mlx_llm.commands.chat:main"
 spark-mlx-server = "spark_mlx_llm.commands.server:main"
+
+[[tool.uv.index]]
+name = "aliyun"
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true
 
 [tool.uv.sources]
 spark-mlx-ext = { path = "extensions/spark-mlx-ext", editable = true }

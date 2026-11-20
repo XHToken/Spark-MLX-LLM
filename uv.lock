@@ -1326,7 +1326,6 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "mlx-lm" },
-    { name = "spark-mlx-ext", marker = "python_full_version >= '3.11' and platform_machine == 'arm64' and sys_platform == 'darwin'" },
 ]
 
 [package.optional-dependencies]
@@ -1336,15 +1335,18 @@ cuda12 = [
 cuda13 = [
     { name = "mlx", extra = ["cuda13"] },
 ]
+metal4 = [
+    { name = "spark-mlx-ext", marker = "python_full_version >= '3.11' and platform_machine == 'arm64' and sys_platform == 'darwin'" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "mlx", extras = ["cuda12"], marker = "extra == 'cuda12'", specifier = ">=0.32.1" },
     { name = "mlx", extras = ["cuda13"], marker = "extra == 'cuda13'", specifier = ">=0.32.1" },
     { name = "mlx-lm", specifier = ">=0.31.3,<0.32" },
-    { name = "spark-mlx-ext", marker = "python_full_version >= '3.11' and platform_machine == 'arm64' and sys_platform == 'darwin'", editable = "extensions/spark-mlx-ext" },
+    { name = "spark-mlx-ext", marker = "python_full_version >= '3.11' and platform_machine == 'arm64' and sys_platform == 'darwin' and extra == 'metal4'", editable = "extensions/spark-mlx-ext" },
 ]
-provides-extras = ["cuda12", "cuda13"]
+provides-extras = ["metal4", "cuda12", "cuda13"]
 
 [[package]]
 name = "tokenizers"
