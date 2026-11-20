@@ -35,14 +35,13 @@ uname -m
 | File | Purpose |
 | --- | --- |
 | [`.python-version`](../../.python-version) | Default development Python version, currently `3.12`; does not pin a patch version |
-| [`pyproject.toml`](../../pyproject.toml) | Package metadata, Python compatibility, backends, and entry points; `tool.uv.sources` specifies the local extension directory |
+| [`pyproject.toml`](../../pyproject.toml) | Package metadata, Python compatibility, backends, entry points, and all uv configuration; `tool.uv.index` defaults to the Aliyun PyPI mirror and `tool.uv.sources` specifies the local extension directory |
 | [`uv.lock`](../../uv.lock) | Dependency lockfile; currently includes MLX 0.32.4, MLX LM 0.31.3, and local spark-mlx-ext 0.2.0 |
-| [`uv.toml`](../../uv.toml) | uv package index configuration; currently defaults to the Aliyun PyPI mirror |
 | `.venv/` | Local virtual environment created during installation; excluded from Git |
 
 `.python-version` selects the development interpreter, while `requires-python`
 declares package compatibility. The main package still supports Python >= 3.10;
-automatic extension installation requires Python >= 3.11.
+the `metal` extension extra requires macOS `arm64` and Python >= 3.11.
 
 ## 3. Install with uv
 
@@ -71,13 +70,15 @@ components. Check the active toolchain, then synchronize the environment:
 ```sh
 xcrun --find metal
 xcrun --sdk macosx --show-sdk-version
-uv sync --locked
+uv sync --locked --extra metal
 ```
 
 This automatically builds `extensions/spark-mlx-ext` and installs it in editable
 mode. No separate wheel installation is needed. uv installs build dependencies
 such as CMake and nanobind in an isolated environment. The extension requires
-macOS >= 26.2; see the toolchain and compatibility details below.
+macOS >= 26.2 and the Metal 4 toolchain; on a machine without them, run
+`uv sync --locked` without `--extra metal` to install the base environment, and
+inference uses the native MLX / MLX-LM paths.
 
 ### Linux / CUDA 12
 
@@ -145,9 +146,9 @@ inference.
 
 ## 5. Apple Silicon extension
 
-`spark-mlx-ext` is a conditional dependency on macOS `arm64` with Python >= 3.11.
-`uv sync` installs it automatically from this repository. Linux and Python 3.10
-environments skip it. Extension 0.2.0 requires official
+`spark-mlx-ext` is the optional `metal` extra for macOS `arm64` with
+Python >= 3.11. `uv sync --extra metal` builds it from this repository; a plain
+`uv sync` omits it. Extension 0.2.0 requires official
 `mlx==0.32.4`; the current Metal binary configuration requires
 `mlx-metal==0.32.4` and macOS >= 26.2. The existing `cp312-cp312` wheel targets
 standard CPython 3.12 / arm64. W8A8 execution additionally requires Apple M5 or
@@ -176,11 +177,11 @@ PY
 ```
 
 The extension is included in the lockfile. Ordinary
-`uv sync --locked` retains it without `--inexact`. After changing
+`uv sync --locked --extra metal` retains it without `--inexact`. After changing
 C++ / Metal sources, rebuild it on Apple Silicon:
 
 ```sh
-uv sync --locked --reinstall-package spark-mlx-ext
+uv sync --locked --extra metal --reinstall-package spark-mlx-ext
 ```
 
 Restart Python / Notebook processes after reinstalling. Model configuration
@@ -220,6 +221,6 @@ for operator switches and see [examples](examples.md) for more usage.
 | No matching MLX wheel on Apple Silicon | Check for `arm64` Python and compatible Python / macOS versions; avoid x86 Python under Rosetta |
 | No matching MLX wheel on Linux | Check CPU architecture, glibc version, and backend selection; current Linux wheels require glibc >= 2.35 |
 | CUDA backend unavailable | Check the driver and devices with `nvidia-smi`, then confirm the matching `cuda12` or `cuda13` extra is installed |
-| `--locked` reports an outdated lockfile | Confirm `pyproject.toml`, `uv.toml`, and `uv.lock` come from the same revision; run `uv lock` and review its changes only when intentionally changing dependencies |
+| `--locked` reports an outdated lockfile | Confirm `pyproject.toml` and `uv.lock` come from the same revision; run `uv lock` and review its changes only when intentionally changing dependencies |
 | Extension import fails or it is not installed | Confirm this repository's uv workflow, macOS `arm64`, and Python >= 3.11; check the toolchain, rebuild using the command above, and restart Python |
-| Aliyun mirror unavailable | Change the index URL in `uv.toml` to `https://pypi.org/simple`, run `uv lock` and review the changes, then run `uv sync --locked` (with the appropriate backend extra on Linux). The original lockfile contains mirror URLs |
+| Aliyun mirror unavailable | Change `tool.uv.index` in `pyproject.toml` to `https://pypi.org/simple`, run `uv lock` and review the changes, then run `uv sync --locked` (with the appropriate backend extra on Linux). The original lockfile contains mirror URLs |

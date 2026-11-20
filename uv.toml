@@ -1,4 +1,0 @@
-[[index]]
-name = "aliyun"
-url = "https://mirrors.aliyun.com/pypi/simple/"
-default = true

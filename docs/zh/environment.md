@@ -32,13 +32,12 @@ uname -m
 | 文件 | 作用 |
 | --- | --- |
 | [`.python-version`](../../.python-version) | 默认开发 Python 版本，目前为 `3.12`，不固定补丁版本 |
-| [`pyproject.toml`](../../pyproject.toml) | 包信息、Python 兼容范围、后端和命令入口；通过 `tool.uv.sources` 指定本地扩展目录 |
+| [`pyproject.toml`](../../pyproject.toml) | 包信息、Python 兼容范围、后端、命令入口及全部 uv 配置；`tool.uv.index` 默认使用阿里云 PyPI 镜像，`tool.uv.sources` 指定本地扩展目录 |
 | [`uv.lock`](../../uv.lock) | 依赖锁文件；当前包含 MLX 0.32.4、MLX LM 0.31.3 和本地 spark-mlx-ext 0.2.0 |
-| [`uv.toml`](../../uv.toml) | uv 的包索引配置，目前默认使用阿里云 PyPI 镜像 |
 | `.venv/` | 本机虚拟环境，安装时生成，不提交到 Git |
 
 `.python-version` 选择开发环境的 Python，`requires-python` 声明包的兼容范围，
-两者作用不同。主包仍声明支持 Python >= 3.10；扩展自动安装要求 Python >= 3.11。
+两者作用不同。主包仍声明支持 Python >= 3.10；`metal` 扩展 extra 要求 macOS `arm64` 和 Python >= 3.11。
 
 ## 3. 使用 uv 安装
 
@@ -67,12 +66,13 @@ uv python install 3.12
 ```sh
 xcrun --find metal
 xcrun --sdk macosx --show-sdk-version
-uv sync --locked
+uv sync --locked --extra metal
 ```
 
 此命令会从 `extensions/spark-mlx-ext` 自动编译并以可编辑方式安装扩展，
 无需单独安装 wheel。uv 会在隔离的构建环境中安装 CMake、nanobind 等构建依赖。
-扩展要求 macOS >= 26.2；具体工具链和版本要求见下文。
+扩展要求 macOS >= 26.2 和 Metal 4 工具链；不满足时改用不带 extra 的
+`uv sync --locked`，只安装基础环境，推理走 MLX / MLX-LM 原生路径。
 
 ### Linux / CUDA 12
 
@@ -137,8 +137,8 @@ Metal 环境应显示 `metal available: True`，CUDA 环境应显示
 
 ## 5. Apple Silicon 扩展
 
-`spark-mlx-ext` 是主项目在 macOS `arm64`、Python >= 3.11 上的条件依赖，
-由 `uv sync` 从同仓库源码自动安装。Linux 和 Python 3.10 环境不会安装它。
+`spark-mlx-ext` 是 macOS `arm64`、Python >= 3.11 上可选的 `metal` extra，
+由 `uv sync --locked --extra metal` 从同仓库源码编译安装；普通 `uv sync` 不安装它。
 当前扩展 0.2.0 要求官方
 `mlx==0.32.4`，当前 Metal 二进制配置要求 `mlx-metal==0.32.4` 和
 macOS >= 26.2。已有的 `cp312-cp312` wheel 适用于标准 CPython 3.12 / arm64；
@@ -165,11 +165,11 @@ print("Extension ready:", version("spark-mlx-ext"))
 PY
 ```
 
-扩展已纳入锁定依赖，普通 `uv sync --locked` 会保留它，无需
+扩展已纳入锁定依赖，普通 `uv sync --locked --extra metal` 会保留它，无需
 `--inexact`。修改 C++ / Metal 源码后需要重新构建；在 Apple Silicon 上执行：
 
 ```sh
-uv sync --locked --reinstall-package spark-mlx-ext
+uv sync --locked --extra metal --reinstall-package spark-mlx-ext
 ```
 
 重新安装后重启 Python / Notebook。模型配置选择的优化算子会在对应扩展实现可用时启用，
@@ -205,6 +205,6 @@ INT4 / INT8 checkpoint 需要先[转换为 MLX 格式](examples.md#1-python-模�
 | Apple Silicon 找不到匹配的 MLX wheel | 检查 Python 架构是否为 `arm64`，以及 Python / macOS 版本是否匹配 wheel；避免通过 Rosetta 使用 x86 Python |
 | Linux 找不到匹配的 MLX wheel | 检查 CPU 架构、glibc 版本及所选后端；当前 Linux wheel 要求 glibc >= 2.35 |
 | CUDA 后端不可用 | 先用 `nvidia-smi` 检查驱动与设备，再确认选择了匹配的 `cuda12` 或 `cuda13` extra |
-| `--locked` 提示锁文件过期 | 确认 `pyproject.toml`、`uv.toml`、`uv.lock` 来自同一版本；主动修改依赖后才运行 `uv lock` 并检查差异 |
+| `--locked` 提示锁文件过期 | 确认 `pyproject.toml`、`uv.lock` 来自同一版本；主动修改依赖后才运行 `uv lock` 并检查差异 |
 | 扩展导入失败或未安装 | 确认使用本仓库的 uv 流程，以及 macOS `arm64` / Python >= 3.11；检查工具链，按上面的命令重新构建并重启 Python |
-| 阿里云镜像无法访问 | 可将 `uv.toml` 的索引 URL 改为 `https://pypi.org/simple`，运行 `uv lock` 并检查差异，再执行 `uv sync --locked`（Linux 加相应后端 extra）；原锁文件包含镜像 URL |
+| 阿里云镜像无法访问 | 可将 `pyproject.toml` 中的 `tool.uv.index` 改为 `https://pypi.org/simple`，运行 `uv lock` 并检查差异，再执行 `uv sync --locked`（Linux 加相应后端 extra）；原锁文件包含镜像 URL |

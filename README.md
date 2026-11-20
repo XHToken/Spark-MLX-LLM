@@ -49,11 +49,13 @@ and dependencies. After preparing Xcode and installing uv:
 git clone https://github.com/XHToken/Spark-MLX-LLM.git
 cd Spark-MLX-LLM
 uv python install 3.12
-uv sync --locked
+uv sync --locked --extra metal
 ```
 
 This creates `.venv`, installs the project dependencies, and builds the bundled
-Apple Silicon extension. Run subsequent commands from the repository root.
+Apple Silicon extension. Without the Metal 4 toolchain, run `uv sync --locked`
+to install the base environment; inference then uses the native MLX paths.
+Run subsequent commands from the repository root.
 Inference requires a Metal or CUDA GPU; model conversion runs on CPU.
 For Linux/CUDA installation, environment checks, and troubleshooting, see the
 [environment guide](docs/en/environment.md).

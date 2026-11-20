@@ -21,10 +21,10 @@ uv python install 3.12
 xcrun --find metal
 DEBUG=0 MACOSX_DEPLOYMENT_TARGET=26.2 \
 CMAKE_ARGS='-DCMAKE_OSX_DEPLOYMENT_TARGET=26.2' \
-uv sync --locked
+uv sync --locked --extra metal
 ```
 
-在受支持的 Apple Silicon 环境中，本扩展是主项目的必需依赖。
+在受支持的 Apple Silicon 环境中，本扩展是主项目的 `metal` extra。
 uv 会自动从 `extensions/spark-mlx-ext` 编译并安装扩展。
 修改原生代码后，在上述同步命令中追加 `--reinstall-package spark-mlx-ext`
 重新构建，然后重启 Python。

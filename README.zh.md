@@ -42,11 +42,12 @@ W8A8 加速还需要 **Apple M5 或更新芯片**及兼容的 `spark-mlx-ext`。
 git clone https://github.com/XHToken/Spark-MLX-LLM.git
 cd Spark-MLX-LLM
 uv python install 3.12
-uv sync --locked
+uv sync --locked --extra metal
 ```
 
 安装会自动创建 `.venv`、安装项目依赖并编译仓库内的 Apple Silicon 扩展。
-后续命令均在仓库根目录执行。推理需要 Metal 或 CUDA GPU，模型转换在 CPU 上执行。
+没有 Metal 4 工具链时，改用 `uv sync --locked` 仅安装基础环境，
+推理走 MLX 原生路径。后续命令均在仓库根目录执行。推理需要 Metal 或 CUDA GPU，模型转换在 CPU 上执行。
 Linux/CUDA 安装方式、环境检查与常见问题见[环境配置说明](docs/zh/environment.md)。
 
 ## 快速开始
